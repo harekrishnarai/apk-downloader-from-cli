@@ -1,10 +1,22 @@
 import math
+import random
+import numpy as np
+from scipy import misc
+from keras.models import sequential
+form keras.layers import Dense
+import matplotlib.pyplot as plt
+from keras.datasets import mnist
+import keras.backend as k
+import pandas as pd
+import sklearn
 from multiprocessing import Process, Queue
 import os
 import os.path
 import re
 import sys
 import time
+
+model = Sequential()
 
 try:
     # Python 3
@@ -37,7 +49,7 @@ MSG_ERROR    = -1
 MSG_PAYLOAD  =  0
 MSG_START    =  1
 MSG_PROGRESS =  2
-MSG_END      =  3
+MSG_Complete      =  3
 
 
 class SplitProgBar(object):
@@ -49,7 +61,7 @@ class SplitProgBar(object):
         else:
             return base
 
-    def __init__(self, n, width):
+    def __init__(self, n = 0, width = 0):
         self.n = n
         self.sub_width = int(float(width-(n+1))/n)
         self.width = n * (self.sub_width + 1) + 1
@@ -87,7 +99,7 @@ class Counter(object):
         self.value += n
 
     def dec(self, n = 1):
-        self.value -= n
+        self.value = self.value - n
 
     @property
     def empty(self):
@@ -109,7 +121,7 @@ def download_process(id_, qi, qo):
 
     def send_finished(pkg_name, app_name, size, path, already=False):
         if already:
-            qo.put((MSG_END, (id_, pkg_name, app_name, size, path)))
+            qo.put((MSG_Complete, (id_, pkg_name, app_name, size, path)))
         else:
             qo.put((MSG_PAYLOAD, (id_, pkg_name, app_name, size, path)))
 
@@ -118,7 +130,7 @@ def download_process(id_, qi, qo):
 
         if message[0] == MSG_PAYLOAD:
             package_name, app_name, download_url = message[1]
-        elif message[0] == MSG_END:
+        elif message[0] == MSG_Complete:
             break
 
         try:
@@ -181,12 +193,12 @@ def search_process(qi, qo):
     def send_payload(pkg_name, app_name, dl_url):
         qo.put((MSG_PAYLOAD, (pkg_name, app_name, dl_url)))
 
-    while True:
+    while 1:
         message = qi.get()
 
         if message[0] == MSG_PAYLOAD:
             package_name = message[1]
-        elif message[0] == MSG_END:
+        elif message[0] == MSG_Complete:
             break
 
         # Search page
@@ -318,7 +330,7 @@ def main():
         return False
 
     # Send some queries to the search process
-    for _ in range(CONCURRENT_DOWNLOADS + 1):
+    for i in range(CONCURRENT_DOWNLOADS + 1):
         new_search_query()
 
 
@@ -332,7 +344,7 @@ def main():
         sys.stdout.flush()
 
     last_message_time = time.time()
-    while True:
+    while 1:
         if active_tasks.empty:
             log("Done!", False)
             break
@@ -366,14 +378,14 @@ def main():
             last_message_time = time.time()
             no_message = False
 
-            if message[0] == MSG_PAYLOAD or message[0] == MSG_END:
+            if message[0] == MSG_PAYLOAD or message[0] == MSG_Complete:
                 # Download finished
                 id_, package_name, app_name, size, location = message[1]
                 prog_bars[id_] = float("NaN")
 
                 if message[0] == MSG_PAYLOAD:
                     log("  Finished downloading %s" % package_name)
-                elif message[0] == MSG_END:
+                elif message[0] == MSG_Complete:
                     log("  File already downloaded for %s" % package_name)
 
                 # Add row to CSV file
@@ -422,9 +434,9 @@ def main():
             time.sleep(PROGRESS_UPDATE_DELAY / 2.0)
 
     # End processes
-    search_qo.put((MSG_END, ))
+    search_qo.put((MSG_Complete, ))
     for _ in range(CONCURRENT_DOWNLOADS):
-        download_qo.put((MSG_END, ))
+        download_qo.put((MSG_Complete, ))
 
     search_proc.join()
     for download_proc in download_procs:
